@@ -7,6 +7,7 @@ using Dapper;
 using Microsoft.Data.SqlClient;
 using Newtonsoft.Json;
 using System.Text.Json;
+using System.Data;
 
 namespace DapperTest.Repository
 {
@@ -96,6 +97,136 @@ namespace DapperTest.Repository
             }
 
             return obj;
+        }
+        public List<Dictionary<string, object?>> GetDictionaryListForReader(IDataReader reader)
+        {
+            var items = new List<Dictionary<string, object?>>();
+
+            string[] propertyNames = new string[reader.FieldCount];
+            for (int count = 0; count < reader.FieldCount; count++)
+            {
+                propertyNames[count] = reader.GetName(count);
+            }
+
+            while (reader.Read())
+            {
+                var item = new Dictionary<string, object?>();
+                for (int count = 0; count < reader.FieldCount; count++)
+                {
+                    string fieldName = propertyNames[count];
+                    if (!reader.IsDBNull(count))
+                    {
+                        if (reader.GetFieldType(count) == typeof(string))
+                        {
+                            string value = reader.GetString(count);
+                            if (value.ToString().Trim().StartsWith("{"))
+                            {
+                                try
+                                {
+                                    JsonDocument document = JsonDocument.Parse(value.ToString());
+                                    item.Add(fieldName, ConvertJsonToDictionary(value));
+                                }
+                                catch (Exception)
+                                {
+                                    item.Add(fieldName, value);
+                                }
+                            }
+                            else if (value.ToString().Trim().StartsWith("["))
+                            {
+                                try
+                                {
+                                    JsonDocument document = JsonDocument.Parse(value.ToString());
+                                    item.Add(fieldName, ConvertJsonArrayToDictionaryList(value));
+                                }
+                                catch (Exception)
+                                {
+                                    item.Add(fieldName, value);
+                                }
+                            }
+                            else
+                            {
+                                item.Add(fieldName, value);
+                            }
+                        }
+                        else
+                        {
+                            item.Add(fieldName, reader.GetValue(count));
+                        }
+                    }
+                    else
+                    {
+                        item.Add(fieldName, null);
+                    }
+                }
+
+                items.Add(item);
+            }
+
+            return items;
+        }
+        private Dictionary<string, object?> ConvertJsonToDictionary(string value)
+        {
+            Dictionary<string, object?> dictObj = new Dictionary<string, object?>();
+
+            JsonDocument document = JsonDocument.Parse(value.ToString());
+            JsonElement rootElement = document.RootElement;
+            foreach (var property in rootElement.EnumerateObject())
+            {
+                var jsonElement = property.Value;
+                if (jsonElement.ValueKind == JsonValueKind.Object)
+                {
+                    dictObj.Add(property.Name, ConvertJsonToDictionary(jsonElement.GetRawText()));
+                }
+                else if (jsonElement.ValueKind == JsonValueKind.Array)
+                {
+                    dictObj.Add(property.Name, ConvertJsonArrayToDictionaryList(jsonElement.GetRawText()));
+                }
+                else if (jsonElement.ValueKind == JsonValueKind.String)
+                {
+                    dictObj.Add(property.Name, jsonElement.GetString());
+                }
+                else if (jsonElement.ValueKind == JsonValueKind.Number)
+                {
+                    int intVal = 0;
+                    double doubleVal = 0;
+                    decimal decimalVal = 0;
+                    if (jsonElement.TryGetInt32(out intVal))
+                    {
+                        dictObj.Add(property.Name, intVal);
+                    }
+                    else if (jsonElement.TryGetDouble(out doubleVal))
+                    {
+                        dictObj.Add(property.Name, doubleVal);
+                    }
+                    else if (jsonElement.TryGetDecimal(out decimalVal))
+                    {
+                        dictObj.Add(property.Name, decimalVal);
+                    }
+                    else
+                    {
+                        dictObj.Add(property.Name, jsonElement.GetRawText());
+                    }
+                }
+                else
+                {
+                    dictObj.Add(property.Name, jsonElement.GetRawText());
+                }
+            }
+
+            return dictObj;
+        }
+
+        private List<Dictionary<string, object?>> ConvertJsonArrayToDictionaryList(string value)
+        {
+            List<Dictionary<string, object?>> dictList = new List<Dictionary<string, object?>>();
+            JsonDocument document = JsonDocument.Parse(value.ToString());
+            JsonElement rootElement = document.RootElement;
+            foreach (var element in rootElement.EnumerateArray())
+            {
+                dictList.Add(ConvertJsonToDictionary(element.GetRawText()));
+            }
+
+            return dictList;
         }
     }
 }
